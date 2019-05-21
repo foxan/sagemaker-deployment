@@ -259,10 +259,14 @@ train_X, test_X, vocabulary = extract_BoW_features(train_X, test_X)
 
 # %%
 import pandas as pd
+import sklearn.model_selection
 
 # TODO: Split the train_X and train_y arrays into the DataFrames val_X, train_X and val_y, train_y. Make sure that
-#       val_X and val_y contain 10 000 entires while train_X and train_y contain the remaining 15 000 entries.
+#       val_X and val_y contain 10 000 entries while train_X and train_y contain the remaining 15 000 entries.
+pd_X = pd.DataFrame(train_X)
+pd_y = pd.DataFrame(train_y)
 
+train_X, val_X, train_y, val_y = sklearn.model_selection.train_test_split(pd_X, pd_y, test_size=0.4)
 
 # %% [markdown]
 # The documentation for the XGBoost algorithm in SageMaker requires that the saved datasets should contain no headers or index and that for the training and validation data, the label should occur first for each sample.
@@ -283,7 +287,8 @@ pd.DataFrame(test_X).to_csv(os.path.join(data_dir, 'test.csv'), header=False, in
 
 # TODO: Save the training and validation data to train.csv and validation.csv in the data_dir directory.
 #       Make sure that the files you create are in the correct format.
-
+pd.concat([train_y, train_X], axis=1).to_csv(os.path.join(data_dir, "train.csv"), header=False, index=False)
+pd.concat([val_y, val_X], axis=1).to_csv(os.path.join(data_dir, "validation.csv"), header=False, index=False)
 
 # %%
 # To save a bit of memory we can set text_X, train_X, val_X, train_y and val_y to None.
@@ -310,9 +315,9 @@ session = sagemaker.Session() # Store the current SageMaker session
 prefix = 'sentiment-xgboost'
 
 # TODO: Upload the test.csv, train.csv and validation.csv files which are contained in data_dir to S3 using sess.upload_data().
-test_location = None
-val_location = None
-train_location = None
+test_location = session.upload_data(os.path.join(data_dir, "test.csv"), key_prefix=prefix)
+val_location = session.upload_data(os.path.join(data_dir, "validation.csv"), key_prefix=prefix)
+train_location = session.upload_data(os.path.join(data_dir, "train.csv"), key_prefix=prefix)
 
 # %% [markdown]
 # ### (TODO) Creating the XGBoost model
@@ -348,13 +353,22 @@ container = get_image_uri(session.boto_region_name, 'xgboost')
 #       It is recommended that you use a single training instance of type ml.m4.xlarge. It is also
 #       recommended that you use 's3://{}/{}/output'.format(session.default_bucket(), prefix) as the
 #       output path.
-
-xgb = None
-
+xgb = sagemaker.estimator.Estimator(container,
+                                    role,
+                                    train_instance_count=1,
+                                    train_instance_type="ml.m4.xlarge",
+                                    output_path=f"s3://{session.default_bucket()}/{prefix}/output")
 
 # TODO: Set the XGBoost hyperparameters in the xgb object. Don't forget that in this case we have a binary
 #       label so we should be using the 'binary:logistic' objective.
-
+xgb.set_hyperparameters(max_depth=5,
+                        eta=0.2,
+                        gamma=4,
+                        min_child_weight=6,
+                        subsample=0.8,
+                        objective="binary:logistic",
+                        early_stopping_rounds=10,
+                        num_round=200)
 
 # %% [markdown]
 # ### Fit the XGBoost model
@@ -378,14 +392,14 @@ xgb.fit({'train': s3_input_train, 'validation': s3_input_validation})
 # %%
 # TODO: Create a transformer object from the trained model. Using an instance count of 1 and an instance type of ml.m4.xlarge
 #       should be more than enough.
-xgb_transformer = None
+xgb_transformer = xgb.transformer(instance_count=1, instance_type="ml.m4.xlarge")
 
 # %% [markdown]
 # Next we actually perform the transform job. When doing so we need to make sure to specify the type of data we are sending so that it is serialized correctly in the background. In our case we are providing our model with csv data so we specify `text/csv`. Also, if the test data that we have provided is too large to process all at once then we need to specify how the data file should be split up. Since each line is a single entry in our data set we tell SageMaker that it can split the input on each line.
 
 # %%
 # TODO: Start the transform job. Make sure to specify the content type and the split type of the test data.
-
+xgb_transformer.transform(test_location, content_type="text/csv", split_type="Line")
 
 # %% [markdown]
 # Currently the transform job is running but it is doing so in the background. Since we wish to wait until the transform job is done and we would like a bit of feedback we can run the `wait()` method.
