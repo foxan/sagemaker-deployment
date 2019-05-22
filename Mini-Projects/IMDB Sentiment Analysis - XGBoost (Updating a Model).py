@@ -449,10 +449,10 @@ new_X, new_Y = new_data.get_new_data()
 
 # %%
 # TODO: Create the CountVectorizer using the previously constructed vocabulary
-vectorizer = None
+vectorizer = CountVectorizer(vocabulary=vocabulary, preprocessor=lambda x: x, tokenizer=lambda x: x)
 
 # TODO: Transform our new data set and store the transformed data in the variable new_XV
-new_XV = None
+new_XV = vectorizer.fit_transform(new_X).toarray()
 
 # %% [markdown]
 # As a quick sanity check, we make sure that the length of each of our bag of words encoded reviews is correct. In particular, it must be the same size as the vocabulary which in our case is `5000`.
@@ -469,6 +469,7 @@ len(new_XV[100])
 
 # %%
 # TODO: Save the data contained in new_XV locally in the data_dir with the file name new_data.csv
+pd.DataFrame(new_XV).to_csv(os.path.join(data_dir, "new_data.csv"), header=False, index=False)
 
 # %% [markdown]
 # Next, we upload the data to S3.
@@ -478,8 +479,7 @@ len(new_XV[100])
 # %%
 # TODO: Upload the new_data.csv file contained in the data_dir folder to S3 and save the resulting
 #       URI as new_data_location
-
-new_data_location = None
+new_data_location = session.upload_data(os.path.join(data_dir, "new_data.csv"), key_prefix=prefix)
 
 # %% [markdown]
 # Then, once the new data has been uploaded to S3, we create and run the batch transform job to get our model's predictions about the sentiment of the new movie reviews.
@@ -489,6 +489,10 @@ new_data_location = None
 # %%
 # TODO: Using xgb_transformer, transform the new_data_location data. You may wish to **wait** until
 #       the batch transform job has finished.
+xgb_transformer.transform(new_data_location, content_type="text/csv", split_type="Line")
+
+# %%
+xgb_transformer.wait()
 
 # %% [markdown]
 # As usual, we copy the results of the batch transform job to our local instance.
@@ -522,7 +526,7 @@ accuracy_score(new_Y, predictions)
 
 # %%
 # TODO: Deploy the model that was created earlier. Recall that the object name is 'xgb'.
-xgb_predictor = None
+xgb_predictor = xgb.deploy(initial_instance_count=1, instance_type="ml.m4.xlarge")
 
 # %% [markdown]
 # ### Diagnose the problem
@@ -596,6 +600,13 @@ print(new_vocabulary - original_vocabulary)
 # **NOTE:** This is meant to be a very open ended question. To investigate you may need more cells than the one provided below. Also, there isn't really a *correct* answer, this is meant to be an opportunity to explore the data.
 
 # %%
+print("Words that were in the original vocabulary but not in the new vocabulary: ")
+for key in (original_vocabulary - new_vocabulary):
+    print(f"{key}: {vocabulary[key]}")
+print("\n")    
+print("Words that were in the new vocabulary but not in the original vocabulary: ")
+for key in (new_vocabulary - original_vocabulary):
+    print(f"{key}: {new_vectorizer.vocabulary_[key]}")
 
 # %% [markdown]
 # ### (TODO) Build a new model
@@ -659,9 +670,9 @@ new_val_y = new_val_X = new_train_y = new_train_X = new_XV = None
 
 # %%
 # TODO: Upload the new data and the new validation.csv and train.csv files in the data_dir directory to S3.
-new_data_location = None
-new_val_location = None
-new_train_location = None
+new_data_location = session.upload_data(os.path.join(data_dir, "new_data.csv"), key_prefix=prefix)
+new_val_location = session.upload_data(os.path.join(data_dir, "new_validation.csv"), key_prefix=prefix)
+new_train_location = session.upload_data(os.path.join(data_dir, "new_train.csv"), key_prefix=prefix)
 
 # %% [markdown]
 # Once our new training data has been uploaded to S3, we can create a new XGBoost model that will take into account the changes that have occured in our data set.
@@ -670,11 +681,24 @@ new_train_location = None
 
 # %%
 # TODO: First, create a SageMaker estimator object for our model.
-new_xgb = None
+new_xgb = sagemaker.estimator.Estimator(container,
+                                        role,
+                                        train_instance_count=1,
+                                        train_instance_type="ml.m4.xlarge",
+                                        output_path=f"s3://{session.default_bucket()}/{prefix}/output",
+                                        sagemaker_session=session)
 
 # TODO: Then set the algorithm specific parameters. You may wish to use the same parameters that were
 #       used when training the original model.
-
+new_xgb.set_hyperparameters(max_depth=5,
+                            eta=0.2,
+                            gamma=4,
+                            min_child_weight=6,
+                            subsample=0.8,
+                            silent=0,
+                            objective='binary:logistic',
+                            early_stopping_rounds=10,
+                            num_round=500)
 
 # %% [markdown]
 # Once the model has been created, we can train it with our new data.
@@ -684,12 +708,12 @@ new_xgb = None
 # %%
 # TODO: First, make sure that you create s3 input objects so that SageMaker knows where to
 #       find the training and validation data.
-s3_new_input_train = None
-s3_new_input_validation = None
+s3_new_input_train = sagemaker.s3_input(s3_data=new_train_location, content_type="text/csv")
+s3_new_input_validation = sagemaker.s3_input(s3_data=new_val_location, content_type="text/csv")
 
 # %%
 # TODO: Using the new validation and training data, 'fit' your new model.
-
+new_xgb.fit({"train": s3_new_input_train, "validation": s3_new_input_validation})
 
 # %% [markdown]
 # ### (TODO) Check the new model
@@ -709,7 +733,7 @@ s3_new_input_validation = None
 
 # %%
 # TODO: Create a transformer object from the new_xgb model
-new_xgb_transformer = None
+new_xgb_transformer = new_xgb.transformer(instance_count=1, instance_type="ml.m4.xlarge")
 
 # %% [markdown]
 # Next we test our model on the new data.
@@ -719,7 +743,10 @@ new_xgb_transformer = None
 # %%
 # TODO: Using new_xgb_transformer, transform the new_data_location data. You may wish to
 #       'wait' for the transform job to finish.
+new_xgb_transformer.transform(new_data_location, content_type="text/csv", split_type="Line")
 
+# %%
+new_xgb_transformer.wait()
 
 # %% [markdown]
 # Copy the results to our local instance.
@@ -747,8 +774,8 @@ accuracy_score(new_Y, predictions)
 # %%
 cache_data = None
 with open(os.path.join(cache_dir, "preprocessed_data.pkl"), "rb") as f:
-            cache_data = pickle.load(f)
-            print("Read preprocessed data from cache file:", "preprocessed_data.pkl")
+    cache_data = pickle.load(f)
+    print("Read preprocessed data from cache file:", "preprocessed_data.pkl")
             
 test_X = cache_data['words_test']
 test_Y = cache_data['labels_test']
@@ -763,7 +790,7 @@ cache_data = None
 
 # %%
 # TODO: Use the new_vectorizer object that you created earlier to transform the test_X data.
-test_X = None
+test_X = new_vectorizer.transform(test_X).toarray()
 
 # %% [markdown]
 # Now that we have correctly encoded the original test data, we can write it to the local instance, upload it to S3 and test it.
@@ -801,7 +828,7 @@ accuracy_score(test_Y, predictions)
 # First, note that we can access the name of the model that we created above using the `model_name` property of the transformer. The reason for this is that in order for the transformer to create a batch transform job it needs to first create the model object inside of SageMaker. Since we've sort of already done this we should take advantage of it.
 
 # %%
-new_xgb_transformer.model_name
+new_xgb_model_name = new_xgb_transformer.model_name
 
 # %% [markdown]
 # Next, we create an endpoint configuration using the low level approach of creating the dictionary object which describes the endpoint configuration we want.
@@ -813,10 +840,18 @@ from time import gmtime, strftime
 
 
 # TODO: Give our endpoint configuration a name. Remember, it needs to be unique.
-new_xgb_endpoint_config_name = None
+new_xgb_endpoint_config_name = "new-xgb-endpoint-config-" + strftime("%Y-%m-%d-%H-%M-%S", gmtime())
 
 # TODO: Using the SageMaker Client, construct the endpoint configuration.
-new_xgb_endpoint_config_info = None
+new_xgb_endpoint_config_info = session.sagemaker_client.create_endpoint_config(
+                                EndpointConfigName = new_xgb_endpoint_config_name,
+                                ProductionVariants = [{
+                                    "InstanceType": "ml.m4.xlarge",
+                                    "InitialVariantWeight": 1,
+                                    "InitialInstanceCount": 1,
+                                    "ModelName": new_xgb_model_name,
+                                    "VariantName": "XGB-Model"
+                                }])
 
 # %% [markdown]
 # Once the endpoint configuration has been constructed, it is a straightforward matter to ask SageMaker to update the existing endpoint so that it uses the new endpoint configuration.
@@ -827,7 +862,7 @@ new_xgb_endpoint_config_info = None
 
 # %%
 # TODO: Update the xgb_predictor.endpoint so that it uses new_xgb_endpoint_config_name.
-
+session.sagemaker_client.update_endpoint(EndpointName=xgb_predictor.endpoint, EndpointConfigName=new_xgb_endpoint_config_name)
 
 # %% [markdown]
 # And, as is generally the case with SageMaker requests, this is being done in the background so if we want to wait for it to complete we need to call the appropriate method.
