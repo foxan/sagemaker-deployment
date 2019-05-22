@@ -284,7 +284,7 @@ if not os.path.exists(data_dir):
 # First, save the test data to test.csv in the data_dir directory. Note that we do not save the associated ground truth
 # labels, instead we will use them later to compare with our model output.
 
-pd.concat([test_y, test_X], axis=1).to_csv(os.path.join(data_dir, 'test.csv'), header=False, index=False)
+pd.DataFrame(test_X).to_csv(os.path.join(data_dir, 'test.csv'), header=False, index=False)
 pd.concat([val_y, val_X], axis=1).to_csv(os.path.join(data_dir, 'validation.csv'), header=False, index=False)
 pd.concat([train_y, train_X], axis=1).to_csv(os.path.join(data_dir, 'train.csv'), header=False, index=False)
 
@@ -341,12 +341,24 @@ container = get_image_uri(session.boto_region_name, 'xgboost')
 #       recommended that you use 's3://{}/{}/output'.format(session.default_bucket(), prefix) as the
 #       output path.
 
-xgb = None
+xgb = sagemaker.estimator.Estimator(container,
+                                    role,
+                                    train_instance_count=1,
+                                    train_instance_type="ml.m4.xlarge",
+                                    output_path=f"s3://{session.default_bucket()}/{prefix}/output",
+                                    sagemaker_session=session)
 
 # TODO: Set the XGBoost hyperparameters in the xgb object. Don't forget that in this case we have a binary
 #       label so we should be using the 'binary:logistic' objective.
 
-
+xgb.set_hyperparameters(max_depth=5,
+                        eta=0.2,
+                        gamma=4,
+                        min_child_weight=6,
+                        subsample=0.8,
+                        objective="binary:logistic",
+                        early_stopping_rounds=10,
+                        num_round=200)
 
 # %% [markdown]
 # ### (TODO) Create the hyperparameter tuner
@@ -361,8 +373,18 @@ from sagemaker.tuner import IntegerParameter, ContinuousParameter, Hyperparamete
 
 # TODO: Create the hyperparameter tuner object
 
-xgb_hyperparameter_tuner = None
-
+xgb_hyperparameter_tuner = HyperparameterTuner(estimator=xgb,
+                                               objective_metric_name="validation:rmse",
+                                               objective_type="Minimize",
+                                               max_jobs=20,
+                                               max_parallel_jobs=3,
+                                               hyperparameter_ranges={
+                                                   "max_depth": IntegerParameter(3, 12),
+                                                   "eta": ContinuousParameter(0.05, 0.5),
+                                                   "min_child_weight": IntegerParameter(2, 8),
+                                                   "subsample": ContinuousParameter(0.5, 0.9),
+                                                   "gamma": ContinuousParameter(0, 10)
+                                               })
 
 
 # %% [markdown]
@@ -383,6 +405,10 @@ xgb_hyperparameter_tuner.fit({'train': s3_input_train, 'validation': s3_input_va
 # %%
 xgb_hyperparameter_tuner.wait()
 
+# %%
+xgb_hyperparameter_tuner_metrics = sagemaker.HyperparameterTuningJobAnalytics(xgb_hyperparameter_tuner.latest_tuning_job.name)
+xgb_hyperparameter_tuner_metrics.dataframe().sort_values(['FinalObjectiveValue'], ascending=True)
+
 # %% [markdown]
 # ### (TODO) Testing the model
 #
@@ -393,7 +419,7 @@ xgb_hyperparameter_tuner.wait()
 # %%
 # TODO: Create a new estimator object attached to the best training job found during hyperparameter tuning
 
-xgb_attached = None
+xgb_attached = sagemaker.estimator.Estimator.attach(xgb_hyperparameter_tuner.best_training_job())
 
 
 # %% [markdown]
@@ -403,7 +429,7 @@ xgb_attached = None
 # TODO: Create a transformer object from the attached estimator. Using an instance count of 1 and an instance type of ml.m4.xlarge
 #       should be more than enough.
 
-xgb_transformer = None
+xgb_transformer = xgb_attached.transformer(instance_count=1, instance_type="ml.m4.xlarge")
 
 
 # %% [markdown]
@@ -411,6 +437,8 @@ xgb_transformer = None
 
 # %%
 # TODO: Start the transform job. Make sure to specify the content type and the split type of the test data.
+
+xgb_transformer.transform(test_location, content_type="text/csv", split_type="Line")
 
 
 # %% [markdown]
