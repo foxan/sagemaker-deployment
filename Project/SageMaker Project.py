@@ -160,18 +160,21 @@ def review_to_words(review):
     
     return words
 
+
 # %% [markdown]
 # The `review_to_words` method defined above uses `BeautifulSoup` to remove any html tags that appear and uses the `nltk` package to tokenize the reviews. As a check to ensure we know how everything is working, try applying `review_to_words` to one of the reviews in the training set.
 
 # %%
 # TODO: Apply review_to_words to a review (train_X[100] or any other review)
-
+review_to_words(train_X[100])
 
 # %% [markdown]
 # **Question:** Above we mentioned that `review_to_words` method removes html formatting and allows us to tokenize the words found in a review, for example, converting *entertained* and *entertaining* into *entertain* so that they are treated as though they are the same word. What else, if anything, does this method do to the input?
 
 # %% [markdown]
-# **Answer:**
+# **Answer:** This method also
+# - converts the words into lower case, and
+# - removes stopwords (i.e. most common words such as `the`, `to`, `my`) from the reviews.
 
 # %% [markdown]
 # The method below applies the `review_to_words` method to each of the reviews in the training and testing datasets. In addition it caches the results. This is because performing this processing step can take a long time. This way if you are unable to complete the notebook in the current session, you can come back without needing to process the data a second time.
@@ -245,13 +248,17 @@ def build_dict(data, vocab_size = 5000):
     
     # TODO: Determine how often each word appears in `data`. Note that `data` is a list of sentences and that a
     #       sentence is a list of words.
+    # flatten the list of sentences into a single list of words
+    flat_data = [word for sentence in data for word in sentence]
     
-    word_count = {} # A dict storing the words that appear in the reviews along with how often they occur
+    # A dict storing the words that appear in the reviews along with how often they occur
+    word_count = {}
+    for word in flat_data:
+        word_count[word] = word_count.get(word, 0) + 1
     
     # TODO: Sort the words found in `data` so that sorted_words[0] is the most frequently appearing word and
     #       sorted_words[-1] is the least frequently appearing word.
-    
-    sorted_words = None
+    sorted_words = [k for k, v in sorted(word_count.items(), key=lambda x: x[1], reverse=True)]
     
     word_dict = {} # This is what we are building, a dictionary that translates words into integers
     for idx, word in enumerate(sorted_words[:vocab_size - 2]): # The -2 is so that we save room for the 'no word'
@@ -267,10 +274,13 @@ word_dict = build_dict(train_X)
 # **Question:** What are the five most frequently appearing (tokenized) words in the training set? Does it makes sense that these words appear frequently in the training set?
 
 # %% [markdown]
-# **Answer:**
+# **Answer:** The five most freqeuent words are `movi`, `film`, `one`, `like` and `time`. It makes sense because they are the most commonly used words when you write a movie review.
 
 # %%
 # TODO: Use this space to determine the five most frequently appearing words in the training set.
+for k, v in word_dict.items():
+    if v < 5 + 2: # first 5 words; +2 for two reserved key
+        print(k)
 
 # %% [markdown]
 # ### Save `word_dict`
@@ -328,12 +338,27 @@ test_X, test_X_len = convert_and_pad_data(word_dict, test_X)
 
 # %%
 # Use this cell to examine one of the processed reviews to make sure everything is working as intended.
+print(train_X[100])
+
+# %%
+# feature (word) count for each review after proprocessing
+feature_count = lambda x: len(np.where(x > 0)[0])
+review_feature_count = np.apply_along_axis(feature_count, 1, train_X)
+
+# %%
+import matplotlib.pyplot as plt
+
+# %matplotlib inline
+
+plt.hist(review_feature_count, bins=20)
+plt.title("Feature (word) count histogram")
+plt.show()
 
 # %% [markdown]
 # **Question:** In the cells above we use the `preprocess_data` and `convert_and_pad_data` methods to process both the training and testing set. Why or why not might this be a problem?
 
 # %% [markdown]
-# **Answer:**
+# **Answer:** Most of the reviews have fewer than 200 features (words) in it so padding it to a length of 500 can be a potential problem.
 
 # %% [markdown]
 # ## Step 3: Upload the data to S3
