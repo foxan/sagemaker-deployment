@@ -452,6 +452,11 @@ def train(model, train_loader, epochs, optimizer, loss_fn, device):
             batch_y = batch_y.to(device)
             
             # TODO: Complete this train method to train the model provided.
+            optimizer.zero_grad()
+            output = model(batch_X)
+            loss = loss_fn(output, batch_y)
+            loss.backward()
+            optimizer.step()
             
             total_loss += loss.data.item()
         print("Epoch: {}, BCELoss: {}".format(epoch, total_loss / len(train_loader)))
@@ -523,6 +528,7 @@ estimator.fit({'training': input_data})
 
 # %%
 # TODO: Deploy the trained model
+predictor = estimator.deploy(initial_instance_count=1, instance_type="ml.m4.xlarge")
 
 # %% [markdown]
 # ## Step 7 - Use the model for testing
@@ -557,7 +563,7 @@ accuracy_score(test_y, predictions)
 # **Question:** How does this model compare to the XGBoost model you created earlier? Why might these two models perform differently on this dataset? Which do *you* think is better for sentiment analysis?
 
 # %% [markdown]
-# **Answer:**
+# **Answer:** Both models have similar performance, so I think either XGBoost or LSTM will be good for sentiment analysis.
 
 # %% [markdown]
 # ### (TODO) More testing
@@ -580,7 +586,7 @@ test_review = 'The simplest pleasures in life are the best, and this film is one
 
 # %%
 # TODO: Convert test_review into a form usable by the model and save the results in test_data
-test_data = None
+test_data = [convert_and_pad(word_dict, review_to_words(test_review))[0]]
 
 # %% [markdown]
 # Now that we have processed the review, we can send the resulting array to our model to predict the sentiment of the review.
@@ -634,6 +640,12 @@ estimator.delete_endpoint()
 # Now that the custom inference code has been written, we will create and deploy our model. To begin with, we need to construct a new PyTorchModel object which points to the model artifacts created during training and also points to the inference code that we wish to use. Then we can call the deploy method to launch the deployment container.
 #
 # **NOTE**: The default behaviour for a deployed PyTorch model is to assume that any input passed to the predictor is a `numpy` array. In our case we want to send a string so we need to construct a simple wrapper around the `RealTimePredictor` class to accomodate simple strings. In a more complicated situation you may want to provide a serialization object, for example if you wanted to sent image data.
+
+# %%
+# # copy word_dict.pkl to model_dir
+model_dir = "serve"
+with open(os.path.join("serve", 'word_dict.pkl'), "wb") as f:
+    pickle.dump(word_dict, f)
 
 # %%
 from sagemaker.predictor import RealTimePredictor
