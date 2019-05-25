@@ -358,7 +358,9 @@ plt.show()
 # **Question:** In the cells above we use the `preprocess_data` and `convert_and_pad_data` methods to process both the training and testing set. Why or why not might this be a problem?
 
 # %% [markdown]
-# **Answer:** Most of the reviews have fewer than 200 features (words) in it so padding it to a length of 500 can be a potential problem.
+# **Answer:** `preprcoess_data` converts reviews into words with data cleansing such as removing html tags and converting to lower case; while `convert_and_pad_data` converts the words into the integer index in `word_dict`, and pad zeros to the end of each integer sequence representation so that they are of the same length for feeding to the neural network.
+#
+# Most of the reviews have fewer than 200 features (words) in it, so padding it to a long length of 500 could be a potential problem.
 
 # %% [markdown]
 # ## Step 3: Upload the data to S3
@@ -563,7 +565,7 @@ accuracy_score(test_y, predictions)
 # **Question:** How does this model compare to the XGBoost model you created earlier? Why might these two models perform differently on this dataset? Which do *you* think is better for sentiment analysis?
 
 # %% [markdown]
-# **Answer:** Both models have similar performance, so I think either XGBoost or LSTM will be good for sentiment analysis.
+# **Answer:** XGBoost provides really good results in classification problem and is computationally efficient, while LSTM is  very useful in natural language processing because of its ability in memorizing sequential data points (which is very important in languages for context understanding). Both XGBoost and LSTM have similar performance, so I think either of them will be good for sentiment analysis.
 
 # %% [markdown]
 # ### (TODO) More testing
